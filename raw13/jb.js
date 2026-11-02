@@ -1016,28 +1016,12 @@ let allDone = false,
         "RESTART-NEEDED",
         why + " -- FULL power off the console (not Rest Mode), then power on",
       );
-      bigRed("RESTART REQUIRED\n\n" + why + "\n\nFULL power off (not Rest Mode), then power on");
+          function bigRed(msg) {
       try {
-        if (!p || !callAddr || !libkernelBase) {
-          mark("RESTART-MANUAL", "no memory primitive - reboot by hand");
-          return;
-        }
-        const rb = dynsymLookup("reboot");
-        if (!rb) {
-          mark("RESTART-MANUAL", "reboot not exported by libkernel - reboot by hand");
-          return;
-        }
-        mark("RESTART-AUTO", "trying reboot() via " + rb);
-        const rv = callAddr(rb, [0, 0]).i32;
-        mark(
-          "RESTART-AUTO",
-          "reboot() returned " + rv + " (sandbox blocked it) - reboot by hand",
-        );
-      } catch (e) {
-        mark("RESTART-MANUAL", "auto-reboot failed: " + (e && e.message) + " - reboot by hand");
-      }
+        mark("RESTART-REQ", msg);
+        state(msg, "bad");
+      } catch (e) {}
     }
-
     async function relaunchPayload() {
       let blob = null;
       try {
