@@ -995,32 +995,38 @@ let allDone = false,
     }
     function bigRed(msg) {
       try {
-        let d = document.getElementById("bigred");
-        if (!d) {
-          d = document.createElement("div");
-          d.id = "bigred";
-                        d.style.cssText =
-            "position:fixed;left:0;top:0;width:100%;height:100%;background:#000;color:#ff2222;" +
-            "z-index:999999;font-size:26px;font-weight:bold;text-align:center;" +
-            "padding-top:38%;font-family:sans-serif;white-space:pre-wrap;line-height:1.4;";
-          document.body.appendChild(d);
-        }
-        d.textContent = msg;
+        mark("RESTART-REQ", msg);
+        state(msg, "bad");
       } catch (e) {}
     }
     let restartAdvised = false;
     async function adviseRestart(why) {
       if (restartAdvised) return;
       restartAdvised = true;
-            mark(
+      mark(
         "RESTART-NEEDED",
         why + " -- FULL power off the console (not Rest Mode), then power on",
       );
-          function bigRed(msg) {
+      bigRed("RESTART REQUIRED\n\n" + why + "\n\nFULL power off (not Rest Mode), then power on");
       try {
-        mark("RESTART-REQ", msg);
-        state(msg, "bad");
-      } catch (e) {}
+        if (!p || !callAddr || !libkernelBase) {
+          mark("RESTART-MANUAL", "no memory primitive - reboot by hand");
+          return;
+        }
+        const rb = dynsymLookup("reboot");
+        if (!rb) {
+          mark("RESTART-MANUAL", "reboot not exported by libkernel - reboot by hand");
+          return;
+        }
+        mark("RESTART-AUTO", "trying reboot() via " + rb);
+        const rv = callAddr(rb, [0, 0]).i32;
+        mark(
+          "RESTART-AUTO",
+          "reboot() returned " + rv + " (sandbox blocked it) - reboot by hand",
+        );
+      } catch (e) {
+        mark("RESTART-MANUAL", "auto-reboot failed: " + (e && e.message) + " - reboot by hand");
+      }
     }
     async function relaunchPayload() {
       let blob = null;
