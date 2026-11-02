@@ -1117,7 +1117,7 @@ let allDone = false,
             if (!globalThis.__HX_KBASE) {
               let kn = 0;
               try { kn = parseInt(sessionStorage.getItem("kv-kbase-retry") || "0", 10) || 0; } catch (e) {}
-              if (kn < 2) {
+              if (kn < 6) {
                 try { sessionStorage.setItem("kv-kbase-retry", String(kn + 1)); } catch (e) {}
                 mark("KV-RETRY", "route-leak found no kernel pointers; page reload " + (kn + 1) + "/2 -- if it keeps failing, FULL power off the console");
                 setTimeout(() => { try { location.reload(); } catch (e) {} }, 600);
