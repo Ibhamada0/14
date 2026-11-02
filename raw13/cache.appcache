@@ -1,7 +1,10 @@
 CACHE MANIFEST
-# snapshot: 38cc7348b5b0495108cff55b09727a9ff375ecd5a07ea56b53bd0d6675c44d2e
+# snapshot: c43a74e4ce314df87931d93d60fa119be3769bdb5ef8c7f07b3192dd74dc866b
 
 CACHE:
+../
+../index.html
+cache-loader.js
 core.js
 core.js?v=28
 goldhen.bin
@@ -17,6 +20,7 @@ index.html
 int64.js
 jb.html
 jb.html?log=1
+jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&fam=0&telemetry=0&stage3=1&stage4=1&stage5=1&stage6=1&stage7=1&stage8=1&stage9=1&stage10=1&goldhen=1
 jb.js
 jb.js?v=stage10s-1
 mem.js

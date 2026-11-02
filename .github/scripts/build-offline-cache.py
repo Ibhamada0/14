@@ -7,7 +7,7 @@ root = Path(__file__).resolve().parents[2]
 base = root / "raw13"
 files = sorted(p for p in base.rglob("*") if p.is_file()
                and p.suffix in {".js", ".html", ".bin"})
-urls = {"offline.html", "jb.html?log=1"}
+urls = {"offline.html", "jb.html?log=1", "../", "../index.html"}
 digest = hashlib.sha256()
 for path in files:
     name = path.relative_to(base).as_posix()
@@ -24,6 +24,13 @@ for path in files:
             if not local.is_file():
                 raise SystemExit("Missing dependency: " + str(local))
             urls.add(local.relative_to(base).as_posix() + "?" + target.split("?", 1)[1])
+entry = (root / "index.html").read_bytes()
+digest.update(entry)
+entry_text = entry.decode("utf-8")
+target_match = re.search(r'var target = "raw13/([^"]+)";', entry_text)
+if not target_match:
+    raise SystemExit("Cannot determine the default cached entry URL")
+urls.add(target_match.group(1))
 launcher = (base / "offline.html").read_bytes()
 digest.update(launcher)
 manifest = "CACHE MANIFEST\n# snapshot: " + digest.hexdigest() + "\n\nCACHE:\n"

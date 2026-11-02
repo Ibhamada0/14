@@ -1,23 +1,14 @@
 <!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta
-        http-equiv="refresh"
-        content="0; url=raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&fam=0&telemetry=0&stage3=1&stage4=1&stage5=1&stage6=1&stage7=1&stage8=1&stage9=1&stage10=1&goldhen=1&v=pages-1"
-    >
-
-    <title>PS4 14.00 </title>
-</head>
-
+<html lang="en" manifest="raw13/cache.appcache">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PS4 offline startup</title>
+<style>body{background:#0b0d10;color:#e6ebf2;font:18px sans-serif;padding:24px}</style></head>
 <body>
-    <script>.
-        var u = "raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&fam=0&telemetry=0&stage3=1&stage4=1&stage5=1&stage6=1&stage7=1&stage8=1&stage9=1&stage10=1&goldhen=1&v=" + Date.now();
-        location.replace(u);
-    </script>
-
-    <p>
-        Opening PS4 14.00 GoldHEN...
-    </p>
-</body>
-</html>
+<p id="cache-status">Checking offline cache...</p>
+<noscript>JavaScript is required to open this page.</noscript>
+<script src="raw13/cache-loader.js"></script>
+<script>
+var target = "raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&fam=0&telemetry=0&stage3=1&stage4=1&stage5=1&stage6=1&stage7=1&stage8=1&stage9=1&stage10=1&goldhen=1";
+startWithOfflineCache(function () { location.replace(target); });
+</script>
+</body></html>

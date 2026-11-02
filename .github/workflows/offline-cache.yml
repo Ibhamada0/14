@@ -2,7 +2,7 @@ name: Refresh offline cache
 on:
   push:
     branches: [main]
-    paths: ['raw13/**', '.github/scripts/build-offline-cache.py', '.github/workflows/offline-cache.yml']
+    paths: ['index.html', 'raw13/**', '.github/scripts/build-offline-cache.py', '.github/workflows/offline-cache.yml']
   workflow_run:
     workflows: ['Sync upstream']
     types: [completed]

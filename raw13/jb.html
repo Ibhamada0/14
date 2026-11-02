@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" manifest="cache.appcache">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -185,8 +185,19 @@
       <div id="state"></div>
       <div id="out"></div>
     </div>
-    <script type="module">
-      import "./jb.js?v=stage10s-1";
+    <script src="cache-loader.js"></script>
+    <script>
+      startWithOfflineCache(function () {
+        var script = document.createElement("script");
+        script.type = "module";
+        script.src = "./jb.js?v=stage10s-1";
+        script.onerror = function () {
+          var status = document.getElementById("cache-status");
+          status.style.display = "block";
+          status.textContent = "Could not load application files. Reconnect and reload.";
+        };
+        document.body.appendChild(script);
+      });
     </script>
   </body>
 </html>

@@ -1,8 +1,12 @@
 # Offline cache
-Open https://ibhamada0.github.io/14/raw13/offline.html on the PS4 while online.
-Bookmark that exact URL. Wait for "Offline cache complete" before disconnecting.
-Reopen the bookmark offline and select "Open the page".
-The cache entry opens jb.html?log=1; it does not change jailbreak settings or scripts.
+Open https://ibhamada0.github.io/14/ on the PS4 while online.
+The entry page waits for a complete offline snapshot before opening the existing
+application with its current settings. Updates are checked on online visits.
+Bookmark that exact URL. After the first complete download, reopening it offline
+starts from the saved snapshot automatically.
+The direct jb.html?log=1 entry also waits for caching before loading application modules.
+The optional raw13/offline.html page remains available for manual cache inspection.
+The root's timestamp cache-buster was removed so the default launch URL can be saved.
 
 This uses legacy Application Cache for browsers that implement it. Modern browsers
 that removed Application Cache display an unsupported message. This has not been
