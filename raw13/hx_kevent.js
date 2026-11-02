@@ -418,3 +418,4 @@ export async function runKevent(c) {
   log("SLOT", "R_SLOT=" + h16(ka(P[13])) + " R_OPS=" + h16(ka(P[14])));
   fin("stage2 DONE (kva held). Next: one-time EV_ADD -23 + fakeops build (bytecode pc 6760-9200)");
 }
+export function hxBridge() { return { scn, scn64, allocBuf, zeroBuf, log, fin, ka, h16, P: T.P, getKbase: () => STATE.kbase }; }
