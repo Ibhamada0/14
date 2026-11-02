@@ -185,7 +185,7 @@ function phaseB1(dceDev) {
   const st = stBuf();
   const dceFd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
   if (dceFd < 0) fin("B1 dce open failed");
-  if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed);
+    if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed");
   const ino = stIno(st);
   if (ino === 0) fin("our own /dev/dce has no usable st_ino - refusing to guess");
   log("B1", "dce_fd=" + dceFd + " ino=" + h16(BigInt(ino)));
