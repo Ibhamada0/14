@@ -317,7 +317,7 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
     for (const fd of fds) if (fd !== -1) rearm(fd, tpl);
     log("KV-REPACKED", "round=" + attempt);
 
-    for (let ci = 0; ci < cands.length && target < 0 && tries < MAX_TRIES; ci++) {
+    for (let ci = 0; ci < cands.length && target < 0 && tries < TRIES_MAX; ci++) {
       const vi = cands[ci];
       if (vi >= fds.length) continue;
       let fd = fds[vi];
