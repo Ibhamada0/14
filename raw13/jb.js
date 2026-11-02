@@ -1,7 +1,7 @@
 import { establishPrimitive } from "./core.js?v=28";
 import { installWindowP, pairStatus } from "./mem.js";
 import { int64 } from "./int64.js";
-import { offsetsFor, PS4 } from "./ps4_offsets.js?v=11";
+import { offsetsFor, PS4 } from "./ps4_offsets.js?v=5";
 
 const outEl = document.getElementById("out");
 const stateEl = document.getElementById("state");
@@ -10,21 +10,26 @@ let passCount = 0,
   failCount = 0;
 let armedEver = false;
 const params = new URLSearchParams(location.search);
+const RUN_ID = Date.now().toString(36) + "-" + Math.floor(Math.random() * 0x100000).toString(16);
 const PROBE_MODE = params.get("probe") === "1";
 const STOP_BEFORE_DOUBLE = params.get("stop") === "beforedouble";
+let primitiveReady = false;
 
-function post(tag, detail) {
+function post(tag, detail, synchronous = false) {
   /* HX1400_POST_DISABLED */
-  if (params.get("hx1400") === "1") {
+  if (params.get("hx1400") === "1" && params.get("telemetry") !== "1") {
+    return;
+  }
+  if (params.get("hx1400") === "1" && !primitiveReady && !synchronous) {
     return;
   }
 
   try {
     const x = new XMLHttpRequest();
-    x.open("POST", "/t", true);
+    x.open("POST", "/t", !synchronous);
     x.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
     x.send(
-      "PS4-JB&tag=" +
+      "PS4-JB&run=" + encodeURIComponent(RUN_ID) + "&tag=" +
         encodeURIComponent(tag) +
         "&detail=" +
         encodeURIComponent(String(detail == null ? "" : detail)),
@@ -169,7 +174,7 @@ function finishUI(ok) {
         : "Refresh the page and run again";
   document.body.className = ok ? "done" : "fail";
 }
-function mark(tag, detail) {
+function mark(tag, detail, synchronous = false) {
   const raw = detail;
   detail = terse(detail);
 
@@ -197,8 +202,10 @@ function mark(tag, detail) {
       outEl.scrollHeight;
   }
 
-  post(tag, raw);
+  post(tag, raw, synchronous);
 }
+
+function markSync(tag, detail) { mark(tag, detail, true); }
 
 function trace(tag, detail) {
   if (VERBOSE) mark(tag, detail);
@@ -269,8 +276,8 @@ let allDone = false,
   let closeFd = null;
   try {
     const { key, off } = offsetsFor(navigator.userAgent);
-    
-   mark("FW", key || "(not a PS4 UA)");
+    mark("BUILD", "jb=skipjb2 base=ef1670a");
+    mark("FW", key || "(not a PS4 UA)");
     if (!off) {
       /* NONPS4-DEBUG */
       try {
@@ -572,14 +579,27 @@ let allDone = false,
     await new Promise((r) => setTimeout(r, 0));
 
     const PRIMITIVE_LOUD = /FAIL|ERROR|THREW|RETRY|ABORT|PASS/i;
-    const carrier = await establishPrimitive({
-      maxAttempts: 6,
-      onEvent: (t, d, a) =>
-        (PRIMITIVE_LOUD.test(t) ? mark : trace)(
-          t,
-          (a != null ? "[" + a + "] " : "") + (d || ""),
-        ),
-    });
+    const entryEvents = [];
+    let entryCount = 0;
+    let carrier;
+    try {
+      carrier = await establishPrimitive({
+        maxAttempts: 8,
+        onEvent: (t, d, a) => {
+          entryCount++;
+          entryEvents.push(t + (a == null ? "" : "[" + a + "]"));
+          if (entryEvents.length > 8) entryEvents.shift();
+          (PRIMITIVE_LOUD.test(t) ? mark : trace)(
+            t,
+            (a != null ? "[" + a + "] " : "") + (d || ""),
+          );
+        },
+      });
+    } finally {
+      primitiveReady = true;
+      mark("CORE-ENTRY-SUMMARY", "events=" + entryCount +
+        " last=" + entryEvents.join(","));
+    }
     installWindowP(carrier, { promote: false });
     if (!window.p) throw new Error("window.p was not installed");
     p = window.p;
@@ -995,15 +1015,24 @@ let allDone = false,
     }
     function bigRed(msg) {
       try {
-        mark("RESTART-REQ", msg);
-        state(msg, "bad");
+        let d = document.getElementById("bigred");
+        if (!d) {
+          d = document.createElement("div");
+          d.id = "bigred";
+                        d.style.cssText =
+            "position:fixed;left:0;top:0;width:100%;height:100%;background:#000;color:#ff2222;" +
+            "z-index:999999;font-size:26px;font-weight:bold;text-align:center;" +
+            "padding-top:38%;font-family:sans-serif;white-space:pre-wrap;line-height:1.4;";
+          document.body.appendChild(d);
+        }
+        d.textContent = msg;
       } catch (e) {}
     }
     let restartAdvised = false;
     async function adviseRestart(why) {
       if (restartAdvised) return;
       restartAdvised = true;
-      mark(
+            mark(
         "RESTART-NEEDED",
         why + " -- FULL power off the console (not Rest Mode), then power on",
       );
@@ -1028,6 +1057,7 @@ let allDone = false,
         mark("RESTART-MANUAL", "auto-reboot failed: " + (e && e.message) + " - reboot by hand");
       }
     }
+
     async function relaunchPayload() {
       let blob = null;
       try {
@@ -1087,9 +1117,35 @@ let allDone = false,
     }
 
     
+    if (params.get("mini_only") === "1") {
+      try {
+        const mini = await import("./hx_kevent.js?v=stage10s-1");
+        const ok = await mini.runMini({
+          p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
+          webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
+          stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
+          mark: mark, markSync: markSync, trace: trace, state: state, check: check,
+          fetchFile: async function (path) {
+            const response = await fetch(path);
+            if (!response.ok) throw new Error(path + " HTTP " + response.status);
+            return new Uint8Array(await response.arrayBuffer());
+          },
+        });
+        mark("MINI-FINAL", "executed_and_readback=" + ok);
+        allDone = true;
+        finishUI(ok === true);
+        return;
+      } catch (e) {
+        mark("MINI-ERROR", String(e));
+        allDone = true;
+        finishUI(false);
+        return;
+      }
+    }
+
     if (params.get("hx1400") === "1") {
       try {
-        const hx = await import("./hx1400_port.js?v=7");
+        const hx = await import("./hx1400_port.js?v=stage10s-1");
         if (!hx || typeof hx.runHx1400 !== "function") {
           mark(
             "HX1400-BAD-MODULE",
@@ -1117,7 +1173,7 @@ let allDone = false,
             if (!globalThis.__HX_KBASE) {
               let kn = 0;
               try { kn = parseInt(sessionStorage.getItem("kv-kbase-retry") || "0", 10) || 0; } catch (e) {}
-              if (kn < 6) {
+              if (kn < 2) {
                 try { sessionStorage.setItem("kv-kbase-retry", String(kn + 1)); } catch (e) {}
                 mark("KV-RETRY", "route-leak found no kernel pointers; page reload " + (kn + 1) + "/2 -- if it keeps failing, FULL power off the console");
                 setTimeout(() => { try { location.reload(); } catch (e) {} }, 600);
@@ -1130,12 +1186,12 @@ let allDone = false,
               return;
             }
             try { sessionStorage.removeItem("kv-kbase-retry"); } catch (e) {}
-            const kvb = await import("./hx_kevent.js?v=15");
+            const kvb = await import("./hx_kevent.js?v=stage10s-1");
             const kvOk = await kvb.runKevent({
               p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
               webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
               stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
-              mark: mark, trace: trace, state: state, check: check,
+              mark: mark, markSync: markSync, trace: trace, state: state, check: check,
               fetchFile: async function (path) {
                 const response = await fetch(path);
                 if (!response.ok) throw new Error(path + " HTTP " + response.status);
