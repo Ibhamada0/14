@@ -1,7 +1,7 @@
 import { establishPrimitive } from "./core.js?v=28";
 import { installWindowP, pairStatus } from "./mem.js";
 import { int64 } from "./int64.js";
-import { offsetsFor, PS4 } from "./ps4_offsets.js?v=10";
+import { offsetsFor, PS4 } from "./ps4_offsets.js?v=11";
 
 const outEl = document.getElementById("out");
 const stateEl = document.getElementById("state");
@@ -269,7 +269,16 @@ let allDone = false,
   let closeFd = null;
   try {
     const { key, off } = offsetsFor(navigator.userAgent);
-    mark("BUILD", "jb=skipjb2 base=ef1670a");
+        const TEST_TAG = "jb=test-v11";
+    mark("BUILD", TEST_TAG);
+    try {
+      const d = document.createElement("div");
+      d.style.cssText =
+        "position:fixed;top:8px;left:8px;z-index:999999;background:#7a0000;" +
+        "color:#fff;font:bold 15px monospace;padding:8px 12px;border:2px solid #ff0;";
+      d.textContent = "TEST BUILD -- " + TEST_TAG;
+      document.body.appendChild(d);
+    } catch (e) {}
     mark("FW", key || "(not a PS4 UA)");
     if (!off) {
       /* NONPS4-DEBUG */
@@ -1140,7 +1149,7 @@ let allDone = false,
               return;
             }
             try { sessionStorage.removeItem("kv-kbase-retry"); } catch (e) {}
-            const kvb = await import("./hx_kevent.js?v=10");
+            const kvb = await import("./hx_kevent.js?v=11");
             const kvOk = await kvb.runKevent({
               p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
               webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
