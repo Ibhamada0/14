@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" manifest="cache.appcache">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Offline cache</title>
+<style>body{background:#0b0d10;color:#e6ebf2;font:18px sans-serif;max-width:700px;margin:40px auto;padding:20px}a,button{font:inherit;color:#7fd0a0}button{background:#172029;padding:10px;border:1px solid #7fd0a0}#open{display:none}</style></head>
+<body><h1>Offline cache</h1><p id="status">Checking offline cache...</p>
+<p>Keep this page open until caching is complete. Bookmark this page for offline use.</p>
+<p id="open"><a href="jb.html?log=1">Open the page</a></p>
+<button id="reload" hidden>Load updated cache</button>
+<script>
+(function () {
+  var status = document.getElementById('status');
+  var open = document.getElementById('open');
+  var reload = document.getElementById('reload');
+  function ready(text) { status.textContent = text; open.style.display = 'block'; }
+  var cache = window.applicationCache;
+  if (!cache) {
+    status.textContent = 'This browser does not support this offline cache. Offline use is unavailable.';
+    return;
+  }
+  function updateReady() {
+    status.textContent = 'A complete update is ready. Reload before opening the page.';
+    reload.hidden = false;
+    open.style.display = 'none';
+  }
+  cache.addEventListener('checking', function () { status.textContent = 'Checking for updates...'; });
+  cache.addEventListener('downloading', function () { status.textContent = 'Downloading offline files...'; });
+  cache.addEventListener('progress', function (event) {
+    status.textContent = event.lengthComputable ? 'Caching: ' + Math.round(event.loaded / event.total * 100) + '%' : 'Downloading offline files...';
+  });
+  cache.addEventListener('cached', function () { ready('Offline cache complete. You can disconnect and open this bookmarked page again.'); });
+  cache.addEventListener('noupdate', function () { ready('Offline cache is ready.'); });
+  cache.addEventListener('updateready', updateReady);
+  cache.addEventListener('obsolete', function () { status.textContent = 'Offline cache is obsolete. Reconnect and reload.'; });
+  cache.addEventListener('error', function () {
+    if (cache.status === cache.IDLE || cache.status === cache.UPDATEREADY) {
+      ready('Could not check for updates. The previously saved cache is available.');
+    } else {
+      status.textContent = 'Caching failed. Keep the internet connected and reload. Offline use is not ready.';
+    }
+  });
+  reload.onclick = function () { location.reload(); };
+  if (cache.status === cache.UPDATEREADY) updateReady();
+  else if (!navigator.onLine && cache.status === cache.IDLE) ready('Offline: using the saved cache.');
+})();
+</script></body></html>

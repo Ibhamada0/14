@@ -1,0 +1,39 @@
+name: Refresh offline cache
+on:
+  push:
+    branches: [main]
+    paths: ['raw13/**', '.github/scripts/build-offline-cache.py', '.github/workflows/offline-cache.yml']
+  workflow_run:
+    workflows: ['Sync upstream']
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: offline-cache
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.repository == 'Ibhamada0/14' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Validate files and generate cache manifest
+        run: python3 .github/scripts/build-offline-cache.py
+      - name: Commit updated manifest
+        run: |
+          if ! git diff --quiet -- raw13/cache.appcache; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add raw13/cache.appcache
+            git commit -m "Refresh offline cache snapshot"
+            git push origin HEAD:main
+          fi
+      - name: Request Pages rebuild
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/Ibhamada0/14/pages/builds
