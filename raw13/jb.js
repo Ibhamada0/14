@@ -269,29 +269,8 @@ let allDone = false,
   let closeFd = null;
   try {
     const { key, off } = offsetsFor(navigator.userAgent);
-            try {
-      const d = document.createElement("div");
-      d.style.cssText =
-        "position:fixed;top:32%;left:50%;transform:translateX(-50%);z-index:999999;" +
-        "width:620px;padding:12px 16px;" +
-        "background:linear-gradient(180deg,#96792a 0%,#6b5416 45%,#46360a 100%);" +
-        "border:4px solid #d4af37;border-radius:10px;" +
-        "box-shadow:0 0 26px #000,inset 0 0 34px rgba(0,0,0,.55);";
-      const t = document.createElement("div");
-      t.textContent = "TEST BUILD";
-      t.style.cssText =
-        "background:#4a0d0d;border:2px solid #7d1f1f;border-radius:6px;" +
-        "padding:16px;color:#fff;font:bold 22px monospace;text-align:center;";
-      const b = document.createElement("div");
-      b.style.cssText =
-        "margin-top:10px;font:bold 17px monospace;color:#f0dd9a;" +
-        "display:flex;justify-content:space-between;";
-      b.innerHTML = "<span>HEN</span><span>build: jkpatch-test-v11</span>";
-      d.appendChild(t);
-      d.appendChild(b);
-      document.body.appendChild(d);
-    } catch (e) {}
-    mark("FW", key || "(not a PS4 UA)");
+    
+   mark("FW", key || "(not a PS4 UA)");
     if (!off) {
       /* NONPS4-DEBUG */
       try {
