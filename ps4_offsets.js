@@ -1,47 +1,3 @@
-export const REQUIRED_KEYS = [
-  "fw_status",
-  "wk_expm1_builtin",
-  "wk_JSFunction_m_function",
-  "wk_POP_RDI_RET",
-  "wk_POP_RSI_RET",
-  "wk_POP_RDX_RET",
-  "wk_POP_RCX_RET",
-  "wk_POP_RAX_RET",
-  "wk_POP_R8_RET",
-  "wk_POP_R9_RET",
-  "wk_LEAVE_RET",
-  "wk_MOV_QWORD_PTR_RDI_RAX_RET",
-  "wk_MOV_RDI_RSI_30_CALL",
-  "wk_POP_RAX_MOV_RAX_JMP_18",
-  "wk_PUSH_RBP_MOV_RBP_RSP_10",
-  "wk_MOV_RDI_RAX_8_CALL_20",
-  "wk_MOV_RDX_RAX_18_CALL_10",
-  "wk_PUSH_RDX_POP_RSP_RET",
-  "pivot_view_sp",
-  "wk_ArrayBuffer_m_impl",
-  "wk_ArrayBuffer_m_contents_m_data",
-  "wk___imp___error",
-  "k__error",
-  "k_scan_stage1",
-  "k_scan_stage2",
-  "k_evf_cv",
-  "k_sysent_661",
-  "k_jmp_rsi",
-];
-export const OPTIONAL_KEYS = [
-  "k_stubs",
-  "wk___imp_pthread_create",
-  "k_pthread_create",
-
-  "kpatch",
-
-  "payload",
-
-  "alias_of",
-
-  "k_idt_rsvd",
-];
-
 export const PS4 = {
   "11.00": {
     fw_status: "state=proven step4q=90/0 reboot=0 kernel_rvas=5/5-vs-dump",
@@ -648,14 +604,13 @@ PS4["12.52"] = Object.assign({}, PS4["12.50"], {
 PS4["14.00"] = Object.assign({}, PS4["13.52"], {
   alias_of: "13.52-webkit",
 
+  // Reported on screen on every run, so it names what actually runs: the
+  // kernel stage comes from afterglow, and the payload is picked by ?mode.
   fw_status:
-    "state=14.00-hx1400-dev " +
+    "state=14.00 " +
     "webkit=13.52-identical " +
-    "kernel=provided-by-hx_tables.js " +
-    "not-for-raw13-full-jb",
-
-  payload: "payload.bin",
-  kpatch: "1400.bin",
+    "kernel=afterglow (apm-UAF, own kernel stage) " +
+    "payload=hen.bin|goldhen.bin",
 
   k_stubs: undefined,
   wk___imp_pthread_create: undefined,

