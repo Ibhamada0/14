@@ -176,13 +176,31 @@
       code {
         color: #9fb3d0;
       }
+
+      /* IBHAMADA calm frame; the original log and DOM ids stay intact. */
+      :root { --bg:#101419; --panel:#191f26; --sunk:#13191f; --line:#2c343e; --fg:#e0e5e9; --bright:#e0e5e9; --ok:#a9c5c0; --dim:#8c99a6; }
+      body, body.log { min-height:100vh; height:auto; display:flex; align-items:center; justify-content:center; padding:32px; background:radial-gradient(ellipse at 50% 15%,#1b242c 0,transparent 75%),var(--bg); }
+      .run-card { position:relative; width:980px; max-width:100%; height:80vh; min-height:420px; max-height:900px; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 24px 70px #00000030; }
+      #brand { padding:20px 24px; text-align:left; flex-shrink:0; }
+      #brand b { font-size:16px; letter-spacing:4px; font-weight:500; }
+      #brand .run-label { float:right; color:var(--dim); font-size:10px; letter-spacing:1px; line-height:24px; }
+      #ramBox { padding:9px 24px; flex-shrink:0; font-size:10px; }
+      #wrap, body.log #wrap { flex:1; min-height:0; padding:22px 24px; }
+      body.log #state { font-size:19px; font-weight:400; margin-bottom:14px; }
+      body.log #out { border-color:var(--line); border-radius:6px; padding:16px; font-size:12px; }
+      #spin { position:absolute; }
+      #msg { position:absolute; padding:0 24px; }
+      .byline { position:static; flex-shrink:0; padding:12px 24px; border-top:1px solid var(--line); color:var(--dim); font-size:9px; line-height:1.4; }
+      @media(max-width:650px) { body,body.log{padding:12px}.run-card{height:90vh;min-height:340px}#brand{padding:16px}#ramBox{padding:8px 16px}#wrap,body.log #wrap{padding:16px}body.log #out{font-size:10px;padding:10px}.byline{padding:10px 16px}#brand .run-label{font-size:8px} }
+
     </style>
   </head>
   <body>
     <!-- jb.js owns the body class: .log while the step log is shown, .done or
          .fail once the chain has settled. The ids below are its contract --
          #ramBox, #msg, #state and #out are read by name. -->
-    <div id="brand"><b>IBHAMADA</b></div>
+    <main class="run-card">
+    <div id="brand"><b>IBHAMADA</b><span class="run-label">GOLDHEN · SESSION</span></div>
     <div id="ramBox">RAM: checking...</div>
     <div id="spin"></div>
     <div id="msg">Restart your console</div>
@@ -191,6 +209,7 @@
       <div id="out"></div>
     </div>
     <p class="byline">IBHAMADA host · afterglow by well0nez/m0zz</p>
+    </main>
     <script type="module">
       import "./jb.js";
     </script>

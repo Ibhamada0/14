@@ -4,7 +4,6 @@
  * in jb.js arms the chain only when the run page was reached from here. */
 
 var TARGET = {
-  hen: "log=1&afterglow=run&payload=hen.bin",
   goldhen: "log=1&afterglow=run&mode=goldhen",
 };
 
@@ -106,8 +105,7 @@ function restore() {
 }
 
 function picked() {
-  var radio = form.querySelector('input[name="payload"]:checked');
-  return radio ? radio.value : "goldhen";
+  return "goldhen";
 }
 
 function start() {

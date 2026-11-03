@@ -1,43 +1,20 @@
 <!doctype html>
 <html class="landing" lang="en" manifest="cache.appcache">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IBHAMADA — PS4 Host</title><link rel="stylesheet" href="style.css">
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IBHAMADA — GoldHEN</title><link rel="stylesheet" href="style.css"></head>
 <body>
-<header class="topbar">
-  <a class="identity" href="./"><span class="monogram">IB</span><span><b>IBHAMADA</b><small>PLAYSTATION 4 HOST</small></span></a>
-  <span class="edition">AFTERGLOW <i></i> PERSONAL EDITION</span>
-</header>
-<div class="shell">
-  <section class="hero">
-    <p class="eyebrow"><span></span> BUILT FOR YOUR CONSOLE</p>
-    <h1>Your console.<br>Your <em>space.</em></h1>
-    <p class="intro">A focused launch experience.<br>Choose your payload and make it yours.</p>
-    <div class="firmware"><span class="tiny">COMPATIBLE FIRMWARE</span><b>13.52 <span>/</span> 14.00</b></div>
-    <div class="signature"><span class="rule"></span> IBHAMADA <span class="tiny">/ PS4</span></div>
-    <span class="hero-number" aria-hidden="true">04</span>
-  </section>
-  <main class="panel">
-    <div class="panel-heading"><span class="tiny">CONTROL CENTER</span><span class="panel-dot"></span></div>
-    <h2>Ready when you are.</h2>
-    <p class="panel-intro">Select your launch option.</p>
-    <form class="pick" id="pick">
-      <label class="opt">
-        <input type="radio" name="payload" value="goldhen" checked>
-        <span class="option-copy"><strong>GoldHEN</strong><small>Homebrew enabler</small></span><span class="option-no">01</span>
-      </label>
-      <label class="opt">
-        <input type="radio" name="payload" value="hen">
-        <span class="option-copy"><strong>ps4-hen</strong><small>Alternative payload</small></span><span class="option-no">02</span>
-      </label>
-      <label class="opt-auto"><input type="checkbox" id="auto" checked><span>Automatic start</span><small>5 SEC</small></label>
-      <button class="btn" type="submit"><span>LAUNCH</span><span aria-hidden="true">&#8599;</span></button>
-      <div class="status-area" role="status"><p class="count" id="count"></p><p class="count cache-note" id="cache" aria-live="polite"></p></div>
-    </form>
-    <div class="cache-hint"><span class="cache-icon" aria-hidden="true">&#8595;</span><p><b>Take it offline.</b><br>Files are cached by supported browsers on your first visit.</p></div>
-  </main>
-</div>
-<footer class="footer"><span>CURATED BY <b>IBHAMADA</b></span><span>Powered by <a href="https://github.com/well0nez/afterglow-web">afterglow</a> &middot; well0nez / m0zz &amp; contributors</span></footer>
-<script src="launch.js"></script>
-</body></html>
+<main class="home-card">
+<header class="home-heading"><span class="mark">IB</span><div><h1>IBHAMADA</h1><p>PLAYSTATION 4</p></div><span class="small-tag">AFTERGLOW</span></header>
+<section class="home-content">
+<p class="eyebrow">YOUR PERSONAL HOST</p><h2>A quiet place to start.</h2>
+<p class="intro">GoldHEN. Ready when you are.</p>
+<div class="fixed-payload"><span class="payload-dot"></span><div><b>GoldHEN</b><small>Homebrew enabler</small></div><span class="firmware">13.52 / 14.00</span></div>
+<form id="pick">
+<label class="auto-option"><input type="checkbox" id="auto" checked><span>Automatic start</span><small>5 seconds</small></label>
+<button type="submit" class="btn">Launch GoldHEN <span aria-hidden="true">&#8594;</span></button>
+<div class="status-space" role="status"><p id="count"></p><p id="cache" aria-live="polite"></p></div>
+</form>
+</section>
+<footer class="home-footer"><span>IBHAMADA PERSONAL EDITION</span><span>afterglow · well0nez / m0zz</span></footer>
+</main>
+<script src="launch.js"></script></body></html>
